@@ -66,7 +66,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://proyecto-personal-proindus.onrender.com"
 
 # --- FUNCIONES DE CARGA ---
 def get_data(endpoint, params=None):
