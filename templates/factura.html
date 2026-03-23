@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        /* Estilos base estilo Holded/SaaS */
+        @page { size: A4; margin: 1.5cm; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; font-size: 12px; margin: 0; }
+        
+        /* Encabezado con identidad corporativa */
+        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
+        .logo-section h1 { color: #004a99; margin: 0; font-size: 32px; letter-spacing: 1px; }
+        .logo-section p { margin: 0; color: #666; font-weight: bold; }
+        .company-details { text-align: right; line-height: 1.4; }
+
+        /* Bloques de información */
+        .info-grid { display: flex; justify-content: space-between; margin-bottom: 30px; }
+        .client-box { width: 45%; background-color: #fcfcfc; padding: 15px; border-radius: 4px; border-left: 4px solid #004a99; }
+        .meta-box { width: 40%; }
+        .meta-table { width: 100%; border-collapse: collapse; }
+        .meta-table td { padding: 5px; border-bottom: 1px solid #eee; }
+
+        /* La Tabla de Conceptos (El corazón del presupuesto) */
+        table.items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        table.items-table th { background-color: #004a99; color: white; padding: 12px; text-align: left; text-transform: uppercase; }
+        table.items-table td { padding: 15px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+        
+        /* Estilo para descripciones largas de reformas */
+        .description-text { white-space: pre-wrap; color: #555; line-height: 1.6; font-size: 11.5px; margin-top: 5px; }
+        .concept-title { font-weight: bold; color: #000; font-size: 13px; display: block; }
+
+        /* Totales */
+        .summary-section { margin-top: 30px; display: flex; justify-content: flex-end; }
+        .summary-table { width: 35%; border-collapse: collapse; }
+        .summary-table td { padding: 8px; text-align: right; }
+        .total-row { font-size: 16px; font-weight: bold; color: #004a99; background: #f4f7fa; }
+
+        /* Pie de página legal */
+        .footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #eee; font-size: 10px; color: #888; }
+        .bank-info { color: #333; font-weight: bold; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo-section">
+            <h1>PROINDUS</h1>
+            <p>SERVICIOS INDUSTRIALES</p>
+        </div>
+        <div class="company-details">
+            <strong>PROINDUS INVERSIONES INDUSTRIALES SL</strong><br>
+            NIF: B19417401<br>
+            Av. Meridiana 325 Bajo 2<br>
+            08027 Barcelona<br>
+            proyectos@proindus.es 
+        </div>
+    </div>
+
+    <div class="info-grid">
+        <div class="client-box">
+            <small style="color:#888; text-transform: uppercase;">Cliente</small><br>
+            <strong>{{ p.cliente.nombre_completo }}</strong> <br>
+            {{ p.cliente.nif_cif }} <br>
+            {{ p.cliente.direccion }} 
+        </div>
+        <div class="meta-box">
+            <table class="meta-table">
+                <tr><td><strong>Presupuesto nº:</strong></td><td style="text-align:right">{{ p.referencia }}</td></tr>
+                <tr><td><strong>Fecha:</strong></td><td style="text-align:right">{{ p.fecha.strftime('%d/%m/%Y') }}</td></tr>
+                <tr><td><strong>Vencimiento:</strong></td><td style="text-align:right">{{ p.vencimiento.strftime('%d/%m/%Y') }}</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th style="width: 65%;">Concepto / Descripción Técnica</th>
+                <th style="text-align: center;">Cant.</th>
+                <th style="text-align: right;">Precio</th>
+                <th style="text-align: right;">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for linea in p.lineas %}
+            <tr>
+                <td>
+                    <span class="concept-title">DESCRIPCIÓN DE LOS TRABAJOS</span>
+                    <div class="description-text">{{ linea.concepto }}</div> 
+                </td>
+                <td style="text-align: center;">{{ linea.cantidad }}</td>
+                <td style="text-align: right;">{{ "{:,.2f}".format(linea.precio_unitario) }}€</td>
+                <td style="text-align: right;">{{ "{:,.2f}".format(linea.subtotal) }}€</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-section">
+        <table class="summary-table">
+            <tr><td>Base Imponible:</td><td>{{ "{:,.2f}".format(p.base_imponible) }}€ </td></tr>
+            <tr><td>Impuestos (IVA 10%):</td><td>{{ "{:,.2f}".format(p.total_iva) }}€ </td></tr>
+            <tr class="total-row"><td>TOTAL:</td><td>{{ "{:,.2f}".format(p.total_final) }}€ </td></tr>
+        </table>
+    </div>
+
+    <div class="footer">
+        <strong>CONDICIONES Y MÉTODOS DE PAGO</strong><br>
+        Se requiere la aceptación firmada de este presupuesto para dar comienzo a los trabajos.<br>
+        Transferencia bancaria al Banco <strong>SANTANDER</strong> a nombre de <strong>PROINDUS INVERSIONES INDUSTRIALES SL</strong><br>
+        IBAN: <span class="bank-info">ES40 0049 3073 0724 1422 5620</span> 
+    </div>
+</body>
+</html>
