@@ -1,6 +1,10 @@
-python3-pip
-python3-cffi
-python3-brotli
-libpango-1.0-0
-libharfbuzz0b
-libpangoft2-1.0-0
+fastapi
+uvicorn
+sqlmodel
+streamlit
+requests
+pandas
+python-dotenv
+weasyprint
+jinja2
+psycopg2-binary
