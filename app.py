@@ -3,188 +3,203 @@ import requests
 from datetime import date
 import pandas as pd
 
-# Configuración de página
-st.set_page_config(page_title="PROINDUS - Gestión", page_icon="🏗️", layout="wide")
+# 1. Configuración de Marca y Estilo
+st.set_page_config(page_title="PROINDUS | Gestión", page_icon="🏗️", layout="wide")
 
-# URL de tu API (Asegúrate de que coincide con el puerto de uvicorn)
+# CSS para inyectar un diseño blanco, limpio y profesional
+# CSS para una legibilidad perfecta (Versión 2.0)
+st.markdown("""
+    <style>
+    /* 1. Fondo general blanco */
+    .main { background-color: #ffffff !important; }
+    .stApp { background-color: #ffffff !important; }
+    
+    /* 2. Títulos y Etiquetas */
+    h1 { color: #1a4a7c !important; font-weight: 800 !important; }
+    h2, h3 { color: #2c3e50 !important; font-weight: 700 !important; margin-top: 20px !important; }
+    label { color: #212529 !important; font-weight: 600 !important; font-size: 1rem !important; }
+
+    /* 3. CORRECCIÓN: "Añadir Concepto" siempre en Negro */
+    [data-testid="stExpander"] details summary p {
+        color: #000000 !important;
+        font-weight: white !important;
+    }
+    [data-testid="stExpander"] svg {
+        fill: #000000 !important;
+    }
+
+    /* 4. CORRECCIÓN: Facturas y Presupuestos en Negro (No blanco) */
+    [data-testid="stVerticalBlock"] p, 
+    [data-testid="stVerticalBlock"] span,
+    [data-testid="stCaptionContainer"] {
+        color: #000000 !important;
+        font-weight: 500 !important;
+    }
+    /* Forzamos que las referencias en negrita sean negras */
+    strong { color: #000000 !important; }
+
+    /* 5. Pestañas (Tabs) */
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; border-bottom: 2px solid #f0f2f6; }
+    .stTabs [data-baseweb="tab"] { 
+        height: 50px; background-color: transparent; 
+        color: #95a5a6 !important; font-weight: 600; 
+    }
+    .stTabs [aria-selected="true"] { 
+        color: #1a4a7c !important; 
+        border-bottom: 3px solid #1a4a7c !important; 
+    }
+
+    /* 6. Métricas */
+    [data-testid="stMetricValue"] { color: #1a4a7c !important; font-weight: 700 !important; }
+    div[data-testid="metric-container"] {
+        background-color: #f8fafd; border: 1px solid #e1e8f0; border-radius: 12px;
+    }
+
+    /* 7. Inputs y Botones */
+    input, textarea { color: #000000 !important; background-color: #ffffff !important; }
+    .stButton>button {
+        border-radius: 8px; border: none; padding: 12px 28px;
+        background-color: #1a4a7c; color: white !important;
+        font-weight: 700; width: 100%;
+    }
+    .stButton>button:hover { background-color: #2c3e50; color: white !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
 API_URL = "http://127.0.0.1:8000"
 
-st.title("🏗️ Panel de Control PROINDUS")
-
-# --- FUNCIONES DE AYUDA ---
-def obtener_lista_clientes():
+# --- FUNCIONES DE CARGA ---
+def get_data(endpoint, params=None):
     try:
-        r = requests.get(f"{API_URL}/clientes/")
+        r = requests.get(f"{API_URL}/{endpoint}", params=params)
         return r.json() if r.status_code == 200 else []
-    except:
-        return []
+    except: return []
 
-# --- ESTADO DE LA SESIÓN (Para guardar las líneas mientras escribe) ---
-if 'carrito_lineas' not in st.session_state:
-    st.session_state.carrito_lineas = []
+# --- CABECERA CON MÉTRICAS ---
+st.title("🏗️ Panel de Control PROINDUS")
+st.write("Bienvenida, aquí tienes el resumen de **Proindus Inversiones Industriales SL**.")
 
-# --- PESTAÑAS ---
-tab_cli, tab_pre, tab3 = st.tabs(["👤 Gestión de Clientes", "📄 Crear nuevo Presupuesto", "📊 Ver Presupuestos"])
+historial_total = get_data("presupuestos/")
+pendientes = [p for p in historial_total if p['facturado'] != "Facturado"]
+facturadas = [p for p in historial_total if p['facturado'] == "Facturado"]
 
-# 1. PESTAÑA CLIENTES (Ya te funciona, la mantenemos limpia)
-with tab_cli:
-    st.header("Registrar Cliente")
-    with st.form("nuevo_cliente"):
-        c1, c2 = st.columns(2)
-        with c1:
-            cod = st.text_input("Código Interno (Ej: P00253)")
-            nom = st.text_input("Nombre / Empresa")
-            dni = st.text_input("NIF / CIF")
-        with c2:
-            mail = st.text_input("Email")
+m1, m2, m3, m4 = st.columns(4)
+with m1: st.metric("Presupuestos Hoy", len(pendientes))
+with m2: st.metric("Facturas del Mes", len(facturadas))
+with m3: 
+    total_pend = sum(float(p['total_final']) for p in pendientes)
+    st.metric("Por Facturar", f"{total_pend:,.2f}€")
+with m4:
+    total_fac = sum(float(f['total_final']) for f in facturadas)
+    st.metric("Total Facturado", f"{total_fac:,.2f}€")
+
+st.divider()
+
+# --- NAVEGACIÓN POR PESTAÑAS ---
+t_cli, t_nuevo, t_pres, t_fac = st.tabs([
+    "👤 CLIENTES", "📝 NUEVO DOCUMENTO", "📂 PRESUPUESTOS", "🧾 FACTURAS"
+])
+
+# 1. CLIENTES (Limpio y ordenado)
+with t_cli:
+    col_c1, col_c2 = st.columns([1, 2])
+    with col_c1:
+        st.subheader("Registrar Nuevo")
+        with st.form("f_cli", clear_on_submit=True):
+            n = st.text_input("Nombre / Empresa")
+            c = st.text_input("Código (Ej: P00253)")
+            d = st.text_input("NIF / CIF")
+            e = st.text_input("Email")
             dir_f = st.text_input("Dirección")
-        
-        if st.form_submit_button("Guardar Cliente"):
-            payload = {"codigo_interno": cod, "nombre_completo": nom, "nif_cif": dni, "direccion": dir_f, "email": mail}
-            res = requests.post(f"{API_URL}/clientes/", json=payload)
-            if res.status_code == 200:
-                st.success(f"✅ {nom} guardado correctamente.")
+            if st.form_submit_button("Añadir Cliente"):
+                requests.post(f"{API_URL}/clientes/", json={"codigo_interno":c, "nombre_completo":n, "nif_cif":d, "direccion":dir_f, "email":e})
                 st.rerun()
+    with col_c2:
+        st.subheader("Lista de Contactos")
+        list_c = get_data("clientes/")
+        if list_c:
+            df_c = pd.DataFrame(list_c)[['codigo_interno', 'nombre_completo', 'nif_cif']]
+            st.dataframe(df_c, use_container_width=True, hide_index=True)
 
-# 2. PESTAÑA PRESUPUESTOS (Aquí es donde estaba el fallo)
-with tab_pre:
-    st.header("Redactar Presupuesto")
-    
-    # SELECCIÓN DE CLIENTE
-    lista_c = obtener_lista_clientes()
-    if not lista_c:
-        st.warning("⚠️ No hay clientes en la base de datos. Crea uno primero.")
+# 2. NUEVO PRESUPUESTO (Paso a paso)
+with t_nuevo:
+    st.subheader("Crear Propuesta para Cliente")
+    list_c = get_data("clientes/")
+    if not list_c:
+        st.info("Añade un cliente para empezar.")
     else:
-        # Creamos un diccionario para que ella vea nombres pero nosotros usemos IDs
-        dict_clientes = {f"{c['codigo_interno']} - {c['nombre_completo']}": c['id'] for c in lista_c}
-        cliente_seleccionado = st.selectbox("Selecciona el cliente:", options=list(dict_clientes.keys()))
-        id_final = dict_clientes[cliente_seleccionado]
-
-        st.divider()
-
-        # AGREGAR LÍNEAS
-        st.subheader("Añadir Conceptos")
+        # Selección de Cliente con búsqueda
+        dict_c = {f"{cl['codigo_interno']} - {cl['nombre_completo']}": cl['id'] for cl in list_c}
+        c_sel = st.selectbox("¿Para quién es el presupuesto?", options=list(dict_c.keys()))
+        
         with st.container(border=True):
-            concepto = st.text_area("Descripción del trabajo:", placeholder="Ej: Lijado manual de 7 vigas...", height=150)
-            col_a, col_b, col_c = st.columns([3, 1, 1])
-            with col_a:
-                p_uni = st.number_input("Precio (€)", min_value=0.0, step=10.0)
-            with col_b:
-                cant = st.number_input("Cantidad", min_value=1.0, value=1.0)
-            with col_c:
-                iva = st.selectbox("IVA", [0.10, 0.21], format_func=lambda x: f"{int(x*100)}%")
+            c_a, c_b = st.columns(2)
+            with c_a:
+                obj = st.text_input("Asunto / Proyecto", placeholder="Ej: Restauración de vigas - Simon")
+                venc = st.date_input("Fecha de Vencimiento", date.today() + pd.Timedelta(days=30))
+            with c_b:
+                cond = st.text_area("Cláusulas Especiales", value="60% de Anticipo a la aceptación / 40% a la finalización.")
 
-            if st.button("➕ Añadir esta línea al presupuesto"):
-                if concepto and p_uni > 0:
-                    nueva_linea = {
-                        "concepto": concepto,
-                        "cantidad": cant,
-                        "precio_unitario": p_uni,
-                        "iva_porcentaje": iva
-                    }
-                    st.session_state.carrito_lineas.append(nueva_linea)
-                    st.toast("Línea añadida con éxito")
-                else:
-                    st.error("Escribe un concepto y un precio.")
-
-        # TABLA DE REVISIÓN
-        if st.session_state.carrito_lineas:
-            st.subheader("Líneas actuales")
-            df = pd.DataFrame(st.session_state.carrito_lineas)
-            st.table(df)
+        st.markdown("### 🛠️ Detalles del Trabajo")
+        if 'lineas' not in st.session_state: st.session_state.lineas = []
+        
+        with st.expander("➕ Añadir Concepto (Haz clic aquí)"):
+            t_con = st.text_input("Título corto (Ej: Decapado)")
+            m_tec = st.text_area("Memoria Técnica (Detalla m2, materiales...)", height=100)
+            l1, l2, l3 = st.columns(3)
+            with l1: p_u = st.number_input("Precio (€)", min_value=0.0)
+            with l2: can = st.number_input("Cantidad", min_value=1.0, value=1.0)
+            with l3: i_p = st.selectbox("IVA", [0.21, 0.10], format_func=lambda x: f"{int(x*100)}%")
             
-            if st.button("🗑️ Borrar todas las líneas"):
-                st.session_state.carrito_lineas = []
+            if st.button("Añadir a la lista"):
+                st.session_state.lineas.append({"titulo_concepto":t_con, "descripcion_detallada":m_tec, "cantidad":can, "precio_unitario":p_u, "iva_porcentaje":i_p})
                 st.rerun()
 
-            st.divider()
+        if st.session_state.lineas:
+            st.table(pd.DataFrame(st.session_state.lineas)[['titulo_concepto', 'precio_unitario']])
+            if st.button("🚀 GENERAR Y GUARDAR"):
+                payload = {"cliente_id": dict_c[c_sel], "vencimiento": str(venc), "objeto_proyecto": obj, "clausulas_condiciones": cond, "lineas": st.session_state.lineas}
+                res = requests.post(f"{API_URL}/presupuestos/pro", json=payload)
+                if res.status_code == 200:
+                    st.session_state.lineas = []
+                    st.success("¡Presupuesto creado!")
+                    st.rerun()
 
-            # BOTÓN FINAL: GENERAR PDF
-            if st.button("🚀 GENERAR Y DESCARGAR PDF"):
-                # Preparar datos para el backend
-                vencimiento = date.today().replace(month=date.today().month + 1)
-                payload_pro = {
-                    "cliente_id": id_final,
-                    "vencimiento": str(vencimiento),
-                    "lineas": st.session_state.carrito_lineas
-                }
-                
-                with st.spinner("Conectando con el servidor..."):
-                    res_p = requests.post(f"{API_URL}/presupuestos/pro", json=payload_pro)
-                    
-                    if res_p.status_code == 200:
-                        data_final = res_p.json()
-                        st.success(f"✅ Presupuesto {data_final['referencia']} creado.")
-                        
-                        # Obtener el PDF real para descargarlo
-                        pdf_res = requests.get(f"{API_URL}/presupuestos/{data_final['id']}/pdf")
-                        
-                        if pdf_res.status_code == 200:
-                            st.download_button(
-                                label="💾 GUARDAR E IMPRIMIR PDF",
-                                data=pdf_res.content,
-                                file_name=f"Presupuesto_{data_final['referencia']}.pdf",
-                                mime="application/pdf"
-                            )
-                            # Limpiamos el carrito para el próximo presupuesto
-                            st.session_state.carrito_lineas = []
-                        else:
-                            st.error("El presupuesto se guardó, pero hubo un error al generar el archivo PDF.")
-                    else:
-                        st.error(f"Error en el servidor: {res_p.text}")
-            
+# 3. HISTORIAL DE PRESUPUESTOS (Visual)
+with t_pres:
+    st.subheader("Presupuestos Pendientes de Cobro")
+    b_p = st.text_input("🔍 Buscar por cliente o código...", key="bp")
+    pre_list = [p for p in get_data("presupuestos/", {"search": b_p}) if p['facturado'] != "Facturado"]
+    
+    for p in pre_list:
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.markdown(f"**{p['referencia']}** | {p['objeto_proyecto']}")
+                st.caption(f"Vence el {p['vencimiento']}")
+            with col2:
+                st.write(f"### {float(p['total_final']):,.2f}€")
+            with col3:
+                pdf = requests.get(f"{API_URL}/presupuestos/{p['id']}/pdf").content
+                st.download_button("📥 PDF", data=pdf, file_name=f"{p['referencia']}.pdf", key=f"d_p_{p['id']}")
+                if st.button("🧾 FACTURAR", key=f"f_p_{p['id']}"):
+                    requests.post(f"{API_URL}/presupuestos/{p['id']}/facturar")
+                    st.rerun()
 
-# --- TAB 3: HISTORIAL DE DOCUMENTOS (CORREGIDO) ---
-with tab3:
-    st.header("Historial de Presupuestos y Facturas")
-    st.info("Aquí puedes ver todos los documentos generados y volver a descargarlos.")
-
-    try:
-        res_historial = requests.get(f"{API_URL}/presupuestos/")
-        if res_historial.status_code == 200:
-            historial = res_historial.json()
-            
-            if not historial:
-                st.write("Aún no se ha creado ningún presupuesto.")
-            else:
-                datos_tabla = []
-                for p in historial:
-                    # Convertimos el total a float() para evitar el error de formato
-                    total_num = float(p['total_final']) 
-                    
-                    datos_tabla.append({
-                        "ID": p['id'],
-                        "Referencia": p['referencia'],
-                        "Fecha": p['fecha'],
-                        "Total (€)": f"{total_num:.2f}€" # Ahora funciona correctamente
-                    })
-                
-                st.dataframe(pd.DataFrame(datos_tabla), use_container_width=True, hide_index=True)
-
-                st.divider()
-
-                st.subheader("📥 Re-descargar un documento")
-                # También corregimos el formato aquí para el selector
-                opciones_descarga = {
-                    f"{p['referencia']} - Total: {float(p['total_final']):.2f}€": p['id'] 
-                    for p in historial
-                }
-                
-                seleccion = st.selectbox("Busca por referencia:", options=list(opciones_descarga.keys()))
-                
-                if seleccion:
-                    id_a_descargar = opciones_descarga[seleccion]
-                    ref_nombre = seleccion.split(" - ")[0]
-                    
-                    with st.spinner("Preparando archivo..."):
-                        pdf_data = requests.get(f"{API_URL}/presupuestos/{id_a_descargar}/pdf").content
-                        
-                        st.download_button(
-                            label=f"⬇️ Descargar PDF de {ref_nombre}",
-                            data=pdf_data,
-                            file_name=f"{ref_nombre}.pdf",
-                            mime="application/pdf",
-                            key=f"btn_historial_{id_a_descargar}"
-                        )
-    except Exception as e:
-        st.error(f"Error de conexión con el historial: {e}")
+# 4. LIBRO DE FACTURAS (Elegante)
+with t_fac:
+    st.subheader("Registro Legal de Facturas")
+    b_f = st.text_input("🔍 Buscar en el archivo...", key="bf")
+    fac_list = [f for f in get_data("presupuestos/", {"search": b_f}) if f['facturado'] == "Facturado"]
+    
+    for f in fac_list:
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.markdown(f"**{f['referencia']}** ✅")
+                st.write(f"Emitida el {f['fecha']}")
+            with col2:
+                st.write(f"### {float(f['total_final']):,.2f}€")
+            with col3:
+                pdf_f = requests.get(f"{API_URL}/presupuestos/{f['id']}/pdf").content
+                st.download_button("📥 DESCARGAR", data=pdf_f, file_name=f"{f['referencia']}.pdf", key=f"d_f_{f['id']}")

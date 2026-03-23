@@ -1,118 +1,146 @@
-from fastapi import FastAPI, Depends, HTTPException
-from sqlmodel import Session, select, func
-from datetime import datetime, timedelta
-from database import get_session, engine
-from models import Cliente, Presupuesto, LineaPresupuesto
-from schemas import ClienteCreate, PresupuestoCreate, PresupuestoRead, LineaRead
-from decimal import Decimal
+from fastapi import FastAPI, Depends, HTTPException, Query
+from sqlmodel import Session, select, func, or_, and_
 from typing import List, Optional
+from datetime import date
+from database import engine, get_session
+from models import Cliente, Presupuesto, LineaPresupuesto, Factura, EstadoPresupuesto, EstadoFacturado
+from schemas import (
+    PresupuestoCreate, PresupuestoRead, PresupuestoUpdate,
+    LineaCreate, FacturaRead
+)
+from pdf import generar_pdf_binario # Tu función de WeasyPrint
+from fastapi.responses import StreamingResponse
 
+app = FastAPI(title="PROINDUS API v2")
 
-app = FastAPI(title="Proindus SL")
+# --- 1. GESTIÓN DE CLIENTES ---
 
 @app.post("/clientes/", response_model=Cliente)
-def crear_cliente(cliente_data: ClienteCreate, session: Session = Depends(get_session)):
-    nuevo_cliente = Cliente(**cliente_data.model_dump())
-    session.add(nuevo_cliente)
+def crear_cliente(cliente: Cliente, session: Session = Depends(get_session)):
+    session.add(cliente)
     session.commit()
-    session.refresh(nuevo_cliente)
-    return nuevo_cliente
+    session.refresh(cliente)
+    return cliente
 
-# En main.py, usando el modelo de la tabla directamente:
 @app.get("/clientes/", response_model=List[Cliente])
 def listar_clientes(session: Session = Depends(get_session)):
-    # select(Cliente) le dice a la DB: "Trae todo lo de la tabla Cliente"
-    statement = select(Cliente)
-    clientes = session.exec(statement).all()
-    return clientes
+    return session.exec(select(Cliente)).all()
 
+# --- 2. GESTIÓN DE PRESUPUESTOS (P) ---
 
 @app.post("/presupuestos/pro")
 def crear_presupuesto_completo(datos: PresupuestoCreate, session: Session = Depends(get_session)):
-    # 1. Validar Cliente
+    # 1. Generar Referencia automática P00...
     cliente = session.get(Cliente, datos.cliente_id)
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    # 2. Lógica de Referencia: [Codigo]-[Secuencia]-[Mes]-[Año] [cite: 103]
-    count_statement = select(func.count(Presupuesto.id)).where(Presupuesto.cliente_id == cliente.id)
-    secuencia = session.exec(count_statement).one() + 1
-    ahora = datetime.now()
-    ref_generada = f"{cliente.codigo_interno}-{secuencia}-{ahora.month}-{ahora.year}"
-
-    # 3. Lógica de Fechas
-    fecha_hoy = ahora.date()
-    fecha_vencimiento = datos.vencimiento or (fecha_hoy + timedelta(days=30))
-
-    # 4. Crear el Presupuesto (Transacción Atómica)
+    hoy = date.today()
+    referencia = f"P{cliente.codigo_interno}-{hoy.day}-{hoy.month}-{hoy.year}"
+    
+    # 2. Crear cabecera
     nuevo_p = Presupuesto(
-        referencia=ref_generada,
-        fecha=fecha_hoy,
-        vencimiento=fecha_vencimiento,
-        cliente_id=cliente.id
+        referencia=referencia,
+        vencimiento=datos.vencimiento,
+        objeto_proyecto=datos.objeto_proyecto,
+        clausulas_condiciones=datos.clausulas_condiciones,
+        cliente_id=datos.cliente_id,
+        estado=EstadoPresupuesto.PENDIENTE
     )
-
-    for l in datos.lineas:
-        nueva_linea = LineaPresupuesto(
-            concepto=l.concepto,
-            cantidad=l.cantidad,
-            precio_unitario=l.precio_unitario,
-            iva_porcentaje=l.iva_porcentaje,
-            presupuesto=nuevo_p # Vinculación automática
-        )
-        nuevo_p.lineas.append(nueva_linea)
-
     session.add(nuevo_p)
     session.commit()
     session.refresh(nuevo_p)
 
-    return {
-        "id": nuevo_p.id,
-        "status": "success",
-        "referencia": nuevo_p.referencia,
-        "total_final": nuevo_p.total_final # Propiedad calculada en el modelo
-    }
-
-
+    # 3. Añadir líneas con doble descripción
+    for l in datos.lineas:
+        nueva_l = LineaPresupuesto(
+            titulo_concepto=l.titulo_concepto,
+            descripcion_detallada=l.descripcion_detallada,
+            cantidad=l.cantidad,
+            precio_unitario=l.precio_unitario,
+            iva_porcentaje=l.iva_porcentaje,
+            presupuesto_id=nuevo_p.id
+        )
+        session.add(nueva_l)
+    
+    session.commit()
+    session.refresh(nuevo_p)
+    return {"id": nuevo_p.id, "referencia": nuevo_p.referencia}
 
 @app.get("/presupuestos/", response_model=List[PresupuestoRead])
-def listar_todos_los_presupuestos(session: Session = Depends(get_session)):
-    """Devuelve todos los presupuestos ordenados por fecha de creación"""
-    # Usamos .order_by para que los últimos aparezcan primero
-    statement = select(Presupuesto).order_by(Presupuesto.id.desc())
-    resultados = session.exec(statement).all()
-    return resultados
-
-
-@app.get("/presupuestos/{referencia}", response_model=PresupuestoRead)
-def obtener_presupuesto_por_referencia(referencia: str, session: Session = Depends(get_session)):
-    """Busca un presupuesto específico por su código (ej: P00253-1-3-2026)"""
-    statement = select(Presupuesto).where(Presupuesto.referencia == referencia)
-    presupuesto = session.exec(statement).first()
+def listar_presupuestos(
+    search: Optional[str] = None,
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    session: Session = Depends(get_session)
+):
+    """Listado con filtros de búsqueda y fechas (Estilo Holded)"""
+    statement = select(Presupuesto).join(Cliente)
     
-    if not presupuesto:
-        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    filtros = []
+    if search:
+        filtros.append(or_(
+            Presupuesto.referencia.contains(search),
+            Presupuesto.objeto_proyecto.contains(search),
+            Cliente.nombre_completo.contains(search)
+        ))
+    if desde:
+        filtros.append(Presupuesto.fecha >= desde)
+    if hasta:
+        filtros.append(Presupuesto.fecha <= hasta)
+    
+    if filtros:
+        statement = statement.where(and_(*filtros))
         
-    return presupuesto
+    return session.exec(statement.order_by(Presupuesto.id.desc())).all()
 
+# --- 3. EL "BOTÓN MÁGICO": CONVERTIR P EN F ---
 
-from fastapi.responses import StreamingResponse
-from pdf import generar_pdf_binario
+@app.post("/presupuestos/{id}/facturar")
+def generar_factura(id: int, session: Session = Depends(get_session)):
+    p = session.get(Presupuesto, id)
+    if not p: raise HTTPException(status_code=404)
+    if p.facturado == EstadoFacturado.FACTURADO: raise HTTPException(status_code=400, detail="Ya facturado")
 
-@app.get("/presupuestos/{presupuesto_id}/pdf")
-def descargar_pdf(presupuesto_id: int, session: Session = Depends(get_session)):
-    # Buscar el presupuesto con sus relaciones cargadas
-    p = session.get(Presupuesto, presupuesto_id)
-    if not p:
-        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    # Transformar Referencia P -> F
+    ref_factura = p.referencia.replace("P", "F", 1)
     
-    # Generar el PDF
-    pdf_stream = generar_pdf_binario(p)
+    nueva_f = Factura(
+        referencia=ref_factura,
+        presupuesto_id=p.id,
+        total_final=p.total_final
+    )
     
-    # Retornar como archivo descargable
-    nombre_archivo = f"Presupuesto_{p.referencia}.pdf"
+    p.estado = EstadoPresupuesto.ACEPTADO
+    p.facturado = EstadoFacturado.FACTURADO
+    
+    session.add(nueva_f)
+    session.add(p)
+    session.commit()
+
+    session.refresh(nueva_f)
+    session.refresh(p)
+
+    return {
+        "id": nueva_f.id, 
+        "referencia": ref_factura,
+        "estado_presupuesto": p.estado,
+        "estado_facturacion": p.facturado
+    }
+
+# --- 4. GENERACIÓN DE PDF DINÁMICO ---
+
+@app.get("/presupuestos/{id}/pdf")
+def descargar_pdf(id: int, session: Session = Depends(get_session)):
+    p = session.get(Presupuesto, id)
+    if not p: raise HTTPException(status_code=404)
+    
+    # Decidimos el título del PDF según el estado
+    tipo_doc = "FACTURA" if p.facturado == EstadoFacturado.FACTURADO else "PRESUPUESTO"
+    
+    # Llamamos a tu función de WeasyPrint pasando el objeto presupuesto
+    # (Asegúrate de que tu función generar_pdf_binario acepte el parámetro 'tipo')
+    pdf_stream = generar_pdf_binario(p, tipo=tipo_doc)
+    
     return StreamingResponse(
         pdf_stream, 
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
+        headers={"Content-Disposition": f"attachment; filename={p.referencia}.pdf"}
     )
