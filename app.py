@@ -66,7 +66,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-API_URL = "https://proyecto-personal-proindus.onrender.com"
+#API_URL = "https://proyecto-personal-proindus.onrender.com"
+API_URL = "http://127.0.0.1:8000"
 
 # --- FUNCIONES DE CARGA ---
 def get_data(endpoint, params=None):
@@ -136,6 +137,7 @@ with t_nuevo:
             c_a, c_b = st.columns(2)
             with c_a:
                 obj = st.text_input("Asunto / Proyecto", placeholder="Ej: Restauración de vigas - Simon")
+                fecha_doc = st.date_input("Fecha del Documento", date.today())
                 venc = st.date_input("Fecha de Vencimiento", date.today() + pd.Timedelta(days=30))
             with c_b:
                 cond = st.text_area("Cláusulas Especiales", value="60% de Anticipo a la aceptación / 40% a la finalización.")
@@ -158,7 +160,7 @@ with t_nuevo:
         if st.session_state.lineas:
             st.table(pd.DataFrame(st.session_state.lineas)[['titulo_concepto', 'precio_unitario']])
             if st.button("🚀 GENERAR Y GUARDAR"):
-                payload = {"cliente_id": dict_c[c_sel], "vencimiento": str(venc), "objeto_proyecto": obj, "clausulas_condiciones": cond, "lineas": st.session_state.lineas}
+                payload = {"cliente_id": dict_c[c_sel], "fecha": str(fecha_doc), "vencimiento": str(venc), "objeto_proyecto": obj, "clausulas_condiciones": cond, "lineas": st.session_state.lineas}
                 res = requests.post(f"{API_URL}/presupuestos/pro", json=payload)
                 if res.status_code == 200:
                     st.session_state.lineas = []
@@ -167,39 +169,99 @@ with t_nuevo:
 
 # 3. HISTORIAL DE PRESUPUESTOS (Visual)
 with t_pres:
-    st.subheader("Presupuestos Pendientes de Cobro")
-    b_p = st.text_input("🔍 Buscar por cliente o código...", key="bp")
-    pre_list = [p for p in get_data("presupuestos/", {"search": b_p}) if p['facturado'] != "Facturado"]
+    st.subheader("Bandeja de Presupuestos Activos")
+    b_p = st.text_input("🔍 Filtrar presupuestos...", key="bp")
     
-    for p in pre_list:
-        with st.container(border=True):
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.markdown(f"**{p['referencia']}** | {p['objeto_proyecto']}")
-                st.caption(f"Vence el {p['vencimiento']}")
-            with col2:
-                st.write(f"### {float(p['total_final']):,.2f}€")
-            with col3:
-                pdf = requests.get(f"{API_URL}/presupuestos/{p['id']}/pdf").content
-                st.download_button("📥 PDF", data=pdf, file_name=f"{p['referencia']}.pdf", key=f"d_p_{p['id']}")
-                if st.button("🧾 FACTURAR", key=f"f_p_{p['id']}"):
-                    requests.post(f"{API_URL}/presupuestos/{p['id']}/facturar")
-                    st.rerun()
+    # 1. Obtenemos los datos (solo los que no están facturados)
+    all_p = get_data("presupuestos/", {"search": b_p})
+    pre_list = [p for p in all_p if p['facturado'] != "Facturado"]
+    
+    if pre_list:
+        df_p = pd.DataFrame(pre_list)
+        
+        # 2. Configuración de la Tabla Profesional
+        st.dataframe(
+            df_p,
+            column_order=("fecha", "referencia", "cliente_nombre", "objeto_proyecto", "base_imponible", "total_iva", "total_final"),
+            column_config={
+                "fecha": st.column_config.DateColumn("Fecha"),
+                "referencia": "Nº Presu",
+                "cliente_nombre": "Cliente",
+                "objeto_proyecto": "Descripción/Proyecto",
+                "base_imponible": st.column_config.NumberColumn("Subtotal", format="%.2f €"),
+                "total_iva": st.column_config.NumberColumn("IVA", format="%.2f €"),
+                "total_final": st.column_config.NumberColumn("Total", format="%.2f €"),
+            },
+            hide_index=True,
+            use_container_width=True
+        )
 
+        st.divider()
+        
+        # 3. Acciones rápidas (Selección por referencia)
+        st.caption("Selecciona un presupuesto para gestionar:")
+        sel_ref = st.selectbox("Elegir documento", [p['referencia'] for p in pre_list], key="sel_p_table")
+        p_sel = next(p for p in pre_list if p['referencia'] == sel_ref)
+        
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            pdf_p = requests.get(f"{API_URL}/presupuestos/{p_sel['id']}/pdf").content
+            st.download_button(f"📥 Descargar PDF {sel_ref}", data=pdf_p, file_name=f"{sel_ref}.pdf")
+        
+        with col_p2:
+            # Botón para convertir en Factura directamente
+            if st.button(f"🧾 Convertir {sel_ref} en Factura Real"):
+                res = requests.post(f"{API_URL}/presupuestos/{p_sel['id']}/facturar")
+                if res.status_code == 200:
+                    st.success(f"¡{sel_ref} ha pasado a ser Factura!")
+                    st.rerun()
+    else:
+        st.info("No hay presupuestos pendientes que coincidan con la búsqueda.")
+
+        
 # 4. LIBRO DE FACTURAS (Elegante)
 with t_fac:
-    st.subheader("Registro Legal de Facturas")
-    b_f = st.text_input("🔍 Buscar en el archivo...", key="bf")
-    fac_list = [f for f in get_data("presupuestos/", {"search": b_f}) if f['facturado'] == "Facturado"]
-    
-    for f in fac_list:
-        with st.container(border=True):
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.markdown(f"**{f['referencia']}** ✅")
-                st.write(f"Emitida el {f['fecha']}")
-            with col2:
-                st.write(f"### {float(f['total_final']):,.2f}€")
-            with col3:
-                pdf_f = requests.get(f"{API_URL}/presupuestos/{f['id']}/pdf").content
-                st.download_button("📥 DESCARGAR", data=pdf_f, file_name=f"{f['referencia']}.pdf", key=f"d_f_{f['id']}")
+    st.subheader("Listado Maestro de Facturas")
+    b_f = st.text_input("🔍 Filtro rápido (Cliente o Nº)...", key="bf")
+    fac_list = get_data("facturas/", {"search": b_f})
+
+    if fac_list:
+        # 1. Convertimos a DataFrame para Streamlit
+        df_f = pd.DataFrame(fac_list)
+        
+        # 2. Mostramos la tabla configurada
+        st.dataframe(
+            df_f,
+            column_order=("fecha_emision", "referencia", "cliente_nombre", "base_imponible", "total_iva", "total_final", "estado_pago"),
+            column_config={
+                "presupuesto_id": None,
+                "fecha_emision": st.column_config.DateColumn("Fecha"),
+                "referencia": "Nº Factura",
+                "cliente_nombre": "Cliente",
+                "base_imponible": st.column_config.NumberColumn("Subtotal", format="%.2f €"),
+                "total_iva": st.column_config.NumberColumn("IVA", format="%.2f €"),
+                "total_final": st.column_config.NumberColumn("Total", format="%.2f €"),
+                "estado_pago": st.column_config.SelectboxColumn("Estado", options=["PENDIENTE", "COBRADA"])
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+
+        # 3. Acciones (PDF y Cobro)
+        st.divider()
+        st.caption("Selecciona una factura para gestionar:")
+        c_sel = st.selectbox("Elegir factura para descargar o cobrar", 
+                             options=[f['referencia'] for f in fac_list], 
+                             key="sel_f")
+        
+        # Buscamos los datos de la seleccionada
+        f_sel = next(f for f in fac_list if f['referencia'] == c_sel)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            pdf_f = requests.get(f"{API_URL}/presupuestos/{f_sel['presupuesto_id']}/pdf").content
+            st.download_button(f"📥 Descargar PDF {c_sel}", data=pdf_f, file_name=f"{c_sel}.pdf")
+        with col_b:
+            if f_sel['estado_pago'] == "PENDIENTE":
+                if st.button(f"💰 Marcar {c_sel} como Cobrada"):
+                    requests.post(f"{API_URL}/facturas/{f_sel['id']}/cobrar")
+                    st.rerun()

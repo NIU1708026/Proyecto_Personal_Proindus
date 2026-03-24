@@ -15,6 +15,10 @@ class EstadoFacturado(str, Enum):
     FACTURADO = "Facturado"   # El verde de Holded
     PARCIALMENTE = "Parcialmente"
 
+class EstadoPago(str, Enum):
+    PENDIENTE = "PENDIENTE"
+    COBRADA = "COBRADA"
+
 # --- 2. CLIENTE ---
 class Cliente(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -86,6 +90,9 @@ class Factura(SQLModel, table=True):
     referencia: str = Field(index=True, unique=True) # "F" + Código [cite: 103]
     fecha_emision: date = Field(default_factory=date.today)
     
+    estado_pago: EstadoPago = Field(default=EstadoPago.PENDIENTE)
+    total_final: Decimal = Field(max_digits=10, decimal_places=2)
+
     presupuesto_id: int = Field(foreign_key="presupuesto.id")
     presupuesto: Optional[Presupuesto] = Relationship(back_populates="factura")
     

@@ -36,6 +36,7 @@ class PresupuestoBase(BaseModel):
 class PresupuestoCreate(PresupuestoBase):
     cliente_id: int
     lineas: List[LineaCreate]
+    fecha: Optional[date] = None
 
 class PresupuestoUpdate(BaseModel):
     """Para permitir a tu madre editar borradores"""
@@ -50,11 +51,11 @@ class PresupuestoRead(PresupuestoBase):
     referencia: str
     fecha: date
     cliente_id: int
+    cliente_nombre: str  # <--- Añadimos esto para la tabla
     base_imponible: Decimal
     total_iva: Decimal
     total_final: Decimal
     facturado: EstadoFacturado
-    lineas: List[LineaRead]
 
     class Config:
         from_attributes = True
@@ -63,10 +64,15 @@ class PresupuestoRead(PresupuestoBase):
 
 class FacturaRead(BaseModel):
     id: int
-    referencia: str # Empezará con "F"
+    referencia: str
     fecha_emision: date
     presupuesto_id: int
     total_final: Decimal
+    estado_pago: str
+    # --- NUEVOS CAMPOS PARA LA TABLA ---
+    base_imponible: Decimal
+    total_iva: Decimal
+    cliente_nombre: str 
 
     class Config:
         from_attributes = True

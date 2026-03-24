@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
+from decimal import Decimal
 from sqlmodel import Session, select, func, or_, and_
 from typing import List, Optional
 from datetime import date
 from database import engine, get_session
-from models import Cliente, Presupuesto, LineaPresupuesto, Factura, EstadoPresupuesto, EstadoFacturado
+from models import Cliente, Presupuesto, LineaPresupuesto, Factura, EstadoPresupuesto, EstadoFacturado, EstadoPago
 from schemas import (
     PresupuestoCreate, PresupuestoRead, PresupuestoUpdate,
     LineaCreate, FacturaRead
@@ -32,18 +33,25 @@ def listar_clientes(session: Session = Depends(get_session)):
 def crear_presupuesto_completo(datos: PresupuestoCreate, session: Session = Depends(get_session)):
     # 1. Generar Referencia automática P00...
     cliente = session.get(Cliente, datos.cliente_id)
-    hoy = date.today()
-    referencia = f"P{cliente.codigo_interno}-{hoy.day}-{hoy.month}-{hoy.year}"
+
+    count_statement = select(func.count(Presupuesto.id)).where(Presupuesto.cliente_id == cliente.id)
+    secuencia = session.exec(count_statement).one() + 1
+
+    fecha_final = datos.fecha or date.today()
+    referencia = f"P{cliente.codigo_interno}-{secuencia}-{fecha_final.month}-{fecha_final.year}"
     
     # 2. Crear cabecera
     nuevo_p = Presupuesto(
         referencia=referencia,
+        fecha = fecha_final,
         vencimiento=datos.vencimiento,
         objeto_proyecto=datos.objeto_proyecto,
         clausulas_condiciones=datos.clausulas_condiciones,
         cliente_id=datos.cliente_id,
-        estado=EstadoPresupuesto.PENDIENTE
+        estado=EstadoPresupuesto.PENDIENTE,
+        facturado=EstadoFacturado.PENDIENTE
     )
+
     session.add(nuevo_p)
     session.commit()
     session.refresh(nuevo_p)
@@ -67,29 +75,30 @@ def crear_presupuesto_completo(datos: PresupuestoCreate, session: Session = Depe
 @app.get("/presupuestos/", response_model=List[PresupuestoRead])
 def listar_presupuestos(
     search: Optional[str] = None,
-    desde: Optional[date] = None,
-    hasta: Optional[date] = None,
     session: Session = Depends(get_session)
 ):
-    """Listado con filtros de búsqueda y fechas (Estilo Holded)"""
+    # Unimos con Cliente para tener acceso a su nombre
     statement = select(Presupuesto).join(Cliente)
     
-    filtros = []
     if search:
-        filtros.append(or_(
+        statement = statement.where(or_(
             Presupuesto.referencia.contains(search),
             Presupuesto.objeto_proyecto.contains(search),
             Cliente.nombre_completo.contains(search)
         ))
-    if desde:
-        filtros.append(Presupuesto.fecha >= desde)
-    if hasta:
-        filtros.append(Presupuesto.fecha <= hasta)
-    
-    if filtros:
-        statement = statement.where(and_(*filtros))
         
-    return session.exec(statement.order_by(Presupuesto.id.desc())).all()
+    resultados = session.exec(statement.order_by(Presupuesto.id.desc())).all()
+    
+    # Mapeamos manualmente para incluir el nombre del cliente
+    return [
+        PresupuestoRead(
+            **p.model_dump(),
+            cliente_nombre=p.cliente.nombre_completo,
+            base_imponible=p.base_imponible,
+            total_iva=p.total_iva,
+            total_final=p.total_final
+        ) for p in resultados
+    ]
 
 # --- 3. EL "BOTÓN MÁGICO": CONVERTIR P EN F ---
 
@@ -105,7 +114,8 @@ def generar_factura(id: int, session: Session = Depends(get_session)):
     nueva_f = Factura(
         referencia=ref_factura,
         presupuesto_id=p.id,
-        total_final=p.total_final
+        total_final=p.total_final,
+        estado_pago=EstadoPago.PENDIENTE
     )
     
     p.estado = EstadoPresupuesto.ACEPTADO
@@ -144,3 +154,51 @@ def descargar_pdf(id: int, session: Session = Depends(get_session)):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={p.referencia}.pdf"}
     )
+
+
+# Añade esto en main.py para gestionar el cobro
+@app.post("/facturas/{id}/cobrar")
+def marcar_factura_cobrada(id: int, session: Session = Depends(get_session)):
+    factura = session.get(Factura, id)
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+    
+    factura.estado_pago = EstadoPago.COBRADA
+    session.add(factura)
+    session.commit()
+    return {"status": "ok", "referencia": factura.referencia}
+
+
+
+@app.get("/facturas/", response_model=List[FacturaRead])
+def listar_facturas(search: Optional[str] = None, session: Session = Depends(get_session)):
+    statement = select(Factura).join(Presupuesto).join(Cliente)
+    if search:
+        statement = statement.where(or_(
+            Factura.referencia.contains(search),
+            Cliente.nombre_completo.contains(search)
+        ))
+    
+    resultados = session.exec(statement).all()
+    
+    # Mapeamos los datos del presupuesto y cliente al esquema de la factura
+    facturas_finales = []
+    for f in resultados:
+        # Extraemos los datos a un diccionario
+        datos_factura = f.model_dump()
+        
+        # Corregimos el total si es None (para facturas viejas)
+        if datos_factura.get("total_final") is None:
+            datos_factura["total_final"] = 0
+            
+        # Añadimos los campos calculados que no están en la tabla Factura
+        facturas_finales.append(
+            FacturaRead(
+                **datos_factura,
+                base_imponible=f.presupuesto.base_imponible,
+                total_iva=f.presupuesto.total_iva,
+                cliente_nombre=f.presupuesto.cliente.nombre_completo
+            )
+        )
+        
+    return facturas_finales
